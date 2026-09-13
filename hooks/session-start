@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+#
+# Fetches this tenant's workflow skills from Service Hub and writes them where
+# Claude Code will find them.
+#
+# Runs at session start, and again after a clear or compact. The last of those
+# matters: compaction drops what was in context, and a skill list that only
+# arrived at startup would quietly stop applying part-way through a long
+# session.
+#
+# Why files rather than injected text. Claude Code reads skill frontmatter from
+# disk natively - the names and descriptions cost about thirty lines of context,
+# and a body is only read when the model decides that skill applies. Injecting
+# all fourteen bodies into every conversation would cost several thousand lines
+# and dilute the attention that makes any of it work.
+#
+# Nothing here is secret. The skills are written to disk in plain text and can
+# be read by whoever owns the machine, which is fine: they are that
+# organisation's own instructions about their own work.
+
+set -uo pipefail
+
+SKILLS_DIR="${CLAUDE_PLUGIN_ROOT}/skills"
+BASE_URL="${SH_SKILLS_URL:-https://supportmanager.azurewebsites.net}"
+
+# Emits a message into the session and exits without writing anything.
+#
+# Said out loud rather than swallowed. A developer who is told their token is
+# wrong fixes it; one who silently receives no skills has no idea anything is
+# missing, and would spend a while wondering why the assistant stopped
+# behaving the way the rest of the team's does.
+fail() {
+  printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' \
+    "$(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')"
+  exit 0
+}
+
+if [[ -z "${SH_SKILLS_TOKEN:-}" || -z "${SH_SKILLS_SECRET:-}" ]]; then
+  fail "Service Hub workflow skills are not configured: SH_SKILLS_TOKEN and SH_SKILLS_SECRET are not set. Ask an administrator for a developer token under Admin, Development workflow."
+fi
+
+RESPONSE="$(
+  curl --silent --show-error --max-time 15 \
+    --write-out '\n%{http_code}' \
+    --header "X-Skills-Token: ${SH_SKILLS_TOKEN}" \
+    --header "X-Skills-Secret: ${SH_SKILLS_SECRET}" \
+    "${BASE_URL%/}/api/plugin/workflow-skills/active" 2>&1
+)"
+
+STATUS="$(printf '%s' "$RESPONSE" | tail -n1)"
+BODY="$(printf '%s' "$RESPONSE" | sed '$d')"
+
+if [[ "$STATUS" != "200" ]]; then
+  fail "Could not fetch workflow skills from Service Hub (HTTP ${STATUS}). ${BODY}"
+fi
+
+# Cleared and rewritten, not merged.
+#
+# Disabling a skill has to take effect, and the only way a file disappears is if
+# something removes it. Merging would leave a skill somebody turned off sitting
+# on disk indefinitely, still being read, with the settings screen insisting it
+# was off.
+rm -rf "$SKILLS_DIR"
+mkdir -p "$SKILLS_DIR"
+
+WRITTEN="$(
+  SKILLS_DIR="$SKILLS_DIR" python3 - "$BODY" <<'PY'
+import json, os, re, sys
+
+skills = json.loads(sys.argv[1])
+root = os.environ["SKILLS_DIR"]
+
+# A name arrives from the server and becomes a path. Anything that is not a
+# plain directory name is refused rather than sanitised: a skill called
+# "../../etc" is not a naming mistake worth silently correcting.
+safe = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+written = 0
+
+for skill in skills:
+    name = (skill.get("name") or "").strip()
+    if not safe.match(name):
+        continue
+
+    body = skill.get("body") or ""
+    description = (skill.get("description") or "").replace("\n", " ").strip()
+
+    directory = os.path.join(root, name)
+    os.makedirs(directory, exist_ok=True)
+
+    # The frontmatter is what Claude Code reads to decide whether a skill
+    # applies, so the description has to survive intact. Quoted and escaped
+    # because these descriptions contain colons, which YAML would otherwise
+    # read as the start of a new key.
+    escaped = description.replace("\\", "\\\\").replace('"', '\\"')
+
+    with open(os.path.join(directory, "SKILL.md"), "w", encoding="utf-8") as handle:
+        handle.write(f'---\nname: {name}\ndescription: "{escaped}"\n---\n\n{body}\n')
+
+    written += 1
+
+print(written)
+PY
+)"
+
+if [[ -z "$WRITTEN" || "$WRITTEN" == "0" ]]; then
+  fail "Service Hub returned no workflow skills. Every skill may be switched off for your organisation - check Admin, Development workflow."
+fi
+
+exit 0

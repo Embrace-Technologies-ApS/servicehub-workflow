@@ -1,0 +1,17 @@
+{
+  "name": "servicehub-workflow",
+  "description": "Your organisation's development workflow, served from Service Hub: what to do before writing code, how to test, how to debug, how to finish.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Embrace Technologies ApS"
+  },
+  "homepage": "https://www.technologies.dk",
+  "license": "MIT",
+  "keywords": [
+    "workflow",
+    "tdd",
+    "debugging",
+    "code-review",
+    "service-hub"
+  ]
+}
