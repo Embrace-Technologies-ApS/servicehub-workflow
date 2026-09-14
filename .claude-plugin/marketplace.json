@@ -1,0 +1,14 @@
+{
+  "name": "servicehub",
+  "owner": {
+    "name": "Embrace Technologies ApS",
+    "url": "https://www.technologies.dk"
+  },
+  "plugins": [
+    {
+      "name": "servicehub-workflow",
+      "source": "./",
+      "description": "Your organisation's development workflow, served from Service Hub."
+    }
+  ]
+}
