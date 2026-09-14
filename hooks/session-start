@@ -107,4 +107,45 @@ if [[ -z "$WRITTEN" || "$WRITTEN" == "0" ]]; then
   fail "Service Hub returned no workflow skills. Every skill may be switched off for your organisation - check Admin, Development workflow."
 fi
 
+# Writing the files is not enough on its own.
+#
+# Claude Code will read a skill when it decides one applies, and left to itself
+# it very often decides none does - it answers the question it was asked and
+# starts writing code. The bootstrap skill exists to stop that: it says, in
+# context, before anything else happens, that a skill must be looked for before
+# any response.
+#
+# So the bootstrap is injected rather than merely written to disk. It is the one
+# skill that cannot wait to be discovered, because it is what does the
+# discovering.
+printf '%s' "$BODY" | BOOTSTRAP_NAME="using-superpowers" python3 -c '
+import json, os, sys
+
+skills = json.load(sys.stdin)
+name = os.environ["BOOTSTRAP_NAME"]
+
+bootstrap = next((s for s in skills if s.get("name") == name), None)
+
+# Nothing to inject is not an error. An organisation that has switched the
+# bootstrap off gets its other skills on disk and native matching only, which is
+# weaker but is what they asked for.
+if not bootstrap:
+    sys.exit(0)
+
+context = (
+    "<EXTREMELY_IMPORTANT>
+"
+    + (bootstrap.get("body") or "")
+    + "
+</EXTREMELY_IMPORTANT>"
+)
+
+print(json.dumps({
+    "hookSpecificOutput": {
+        "hookEventName": "SessionStart",
+        "additionalContext": context,
+    }
+}))
+'
+
 exit 0
