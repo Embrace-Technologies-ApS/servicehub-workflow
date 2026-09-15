@@ -133,11 +133,9 @@ if not bootstrap:
     sys.exit(0)
 
 context = (
-    "<EXTREMELY_IMPORTANT>
-"
+    "<EXTREMELY_IMPORTANT>\n"
     + (bootstrap.get("body") or "")
-    + "
-</EXTREMELY_IMPORTANT>"
+    + "\n</EXTREMELY_IMPORTANT>"
 )
 
 print(json.dumps({
