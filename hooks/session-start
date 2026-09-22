@@ -20,7 +20,31 @@
 
 set -uo pipefail
 
-SKILLS_DIR="${CLAUDE_PLUGIN_ROOT}/skills"
+# Try environment variables first, then fallback to known default CLI plugin paths
+RESOLVED_ROOT=""
+for path in \
+  "${PLUGIN_ROOT:-}" \
+  "${CLAUDE_PLUGIN_ROOT:-}" \
+  "${AGY_PLUGIN_ROOT:-}" \
+  "$HOME/.gemini/config/plugins/servicehub-workflow" \
+  "$HOME/.claude/plugins/servicehub-workflow" \
+  "$(pwd)/.agents/plugins/servicehub-workflow" \
+  "$(pwd)/.agent/plugins/servicehub-workflow" \
+  "$(pwd)/.claude/plugins/servicehub-workflow" \
+  "$(pwd)"
+do
+  if [[ -n "$path" ]]; then
+    # Use the path if it exists, or if its parent directory exists (meaning we can create it)
+    if [[ -d "$path" ]] || [[ -d "$(dirname "$path")" ]]; then
+      RESOLVED_ROOT="$path"
+      break
+    fi
+  fi
+done
+
+PLUGIN_ROOT="$RESOLVED_ROOT"
+
+SKILLS_DIR="${PLUGIN_ROOT}/skills"
 BASE_URL="${SH_SKILLS_URL:-https://supportmanager.azurewebsites.net}"
 
 # Emits a message into the session and exits without writing anything.
@@ -30,8 +54,9 @@ BASE_URL="${SH_SKILLS_URL:-https://supportmanager.azurewebsites.net}"
 # missing, and would spend a while wondering why the assistant stopped
 # behaving the way the rest of the team's does.
 fail() {
-  printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' \
-    "$(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')"
+  local msg
+  msg="$(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')"
+  printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s},"injectSteps":[{"ephemeralMessage":%s}]}\n' "$msg" "$msg"
   exit 0
 }
 
@@ -142,7 +167,12 @@ print(json.dumps({
     "hookSpecificOutput": {
         "hookEventName": "SessionStart",
         "additionalContext": context,
-    }
+    },
+    "injectSteps": [
+        {
+            "ephemeralMessage": context
+        }
+    ]
 }))
 '
 
